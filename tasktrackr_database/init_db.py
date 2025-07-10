@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Initialize SQLite database for tasktrackr_database"""
+"""Initialize SQLite database for tasktrackr_database
+
+This script creates (or updates, if missing columns/tables) the database schema for TaskTrackr.
+- Adds/extends 'users' table with password_hash for authentication.
+- Adds 'tasks' table (id, user_id, title, description, due_date, completed).
+- Seeds basic data.
+"""
 
 import sqlite3
 import os
@@ -26,11 +32,10 @@ if db_exists:
 else:
     print("Creating new SQLite database...")
 
-# Create database with sample tables
 conn = sqlite3.connect(DB_NAME)
 cursor = conn.cursor()
 
-# Create initial schema
+# Create app_info table
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS app_info (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,17 +45,51 @@ cursor.execute("""
     )
 """)
 
-# Create a sample users table as an example
+# 1. USERS table: Ensure table exists, and add password_hash if needed
+
+# Check if users table exists (for idempotency)
 cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
+    SELECT name FROM sqlite_master WHERE type='table' AND name='users'
+""")
+users_exists = cursor.fetchone() is not None
+
+if not users_exists:
+    # Create fresh users table
+    cursor.execute("""
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    print("Created users table.")
+else:
+    # Add password_hash column if it does not exist
+    cursor.execute("PRAGMA table_info(users)")
+    user_cols = [row[1] for row in cursor.fetchall()]
+    if 'password_hash' not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+        print("Added password_hash column to users table.")
+
+# 2. TASKS table: Create if not exists
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        due_date TEXT,
+        completed INTEGER DEFAULT 0,  -- 0 = not complete, 1 = complete
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )
 """)
+print("Ensured tasks table exists.")
 
-# Insert initial data
+# 3. Insert or update initial seed data
+# Insert App Info
 cursor.execute("INSERT OR REPLACE INTO app_info (key, value) VALUES (?, ?)", 
                ("project_name", "tasktrackr_database"))
 cursor.execute("INSERT OR REPLACE INTO app_info (key, value) VALUES (?, ?)", 
@@ -59,6 +98,33 @@ cursor.execute("INSERT OR REPLACE INTO app_info (key, value) VALUES (?, ?)",
                ("author", "John Doe"))
 cursor.execute("INSERT OR REPLACE INTO app_info (key, value) VALUES (?, ?)", 
                ("description", ""))
+
+# If users table is empty, insert a sample user
+cursor.execute("SELECT COUNT(*) FROM users")
+u_ct = cursor.fetchone()[0]
+if u_ct == 0:
+    import hashlib
+    # Simple password hash for demonstration (DO NOT use in prod)
+    plaintext_pw = "testpassword"
+    hashval = hashlib.sha256(plaintext_pw.encode("utf-8")).hexdigest()
+    cursor.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+                   ("demo", "demo@example.com", hashval))
+    print("Seeded initial user 'demo/demo@example.com' (password: testpassword)")
+
+# If tasks table is empty, insert a sample task for demo user
+cursor.execute("SELECT COUNT(*) FROM tasks")
+t_ct = cursor.fetchone()[0]
+if t_ct == 0:
+    # Find demo user id
+    cursor.execute("SELECT id FROM users WHERE username=?", ("demo",))
+    demo_user = cursor.fetchone()
+    if demo_user:
+        user_id = demo_user[0]
+        cursor.execute(
+            "INSERT INTO tasks (user_id, title, description, due_date, completed) VALUES (?, ?, ?, ?, ?)",
+            (user_id, "Welcome Task", "This is your first task!", "2024-07-04", 0)
+        )
+        print("Seeded initial task for demo user.")
 
 conn.commit()
 
@@ -128,5 +194,4 @@ try:
 except:
     pass
 
-# Exit successfully
 print("\nScript completed successfully.")
