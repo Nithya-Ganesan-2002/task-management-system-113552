@@ -1,0 +1,4 @@
+{
+    "command": "python init_db.py",
+    "working_directory": "/home/kavia/workspace/code-generation/task-management-system-113552/tasktrackr_database"
+}
